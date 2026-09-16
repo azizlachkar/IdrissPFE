@@ -1,5 +1,6 @@
 package com.cmrt.pfe.bootstrap;
 
+import com.cmrt.pfe.models.EngineeringChange;
 import com.cmrt.pfe.models.Issue;
 import com.cmrt.pfe.models.Product;
 import com.cmrt.pfe.models.Task;
@@ -28,12 +29,17 @@ import com.cmrt.pfe.services.IssueService;
 import com.cmrt.pfe.services.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.Index;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -55,6 +61,9 @@ public class DataSeeder implements CommandLineRunner {
     private final WorkflowService workflowService;
     private final IssueService issueService;
 
+    @Autowired
+    private MongoTemplate mongoTemplate;
+
     @Value("${app.seed.enabled}")
     private boolean enabled;
 
@@ -67,65 +76,56 @@ public class DataSeeder implements CommandLineRunner {
             log.info("Jeu de donnees de demonstration desactive");
             return;
         }
-        if (userRepository.count() > 0) {
+        if (userRepository.findByEmailIgnoreCase("admin@cmrt.tn").isPresent()) {
             log.info("Base deja peuplee : le seeder ne fait rien");
             return;
         }
 
+        // Drop all stale collections (clears corrupt/non-sparse indexes from previous failed runs)
+        mongoTemplate.dropCollection(User.class);
+        mongoTemplate.dropCollection(Product.class);
+        mongoTemplate.dropCollection(TestResource.class);
+        mongoTemplate.dropCollection(Task.class);
+        mongoTemplate.dropCollection(Issue.class);
+        mongoTemplate.dropCollection(EngineeringChange.class);
+
         log.info("Creation du jeu de donnees de demonstration...");
-        List<User> users = seedUsers();
-        User admin = byRole(users, Role.ADMIN);
-        User chef = byRole(users, Role.CHEF_PROJET);
-        User methodiste = byRole(users, Role.METHODISTE);
-        User qualiticien = byRole(users, Role.QUALITICIEN);
-        User controle = byRole(users, Role.CONTROLE_TECHNIQUE);
+        seedUsers();
+        mongoTemplate.indexOps(User.class)
+                .ensureIndex(new Index().on("email", Sort.Direction.ASC).unique().sparse());
 
-        seedResources(controle);
-        List<Product> products = seedProducts(chef, methodiste, qualiticien);
-        seedTasks(products, methodiste, qualiticien, controle);
-        seedIssues(products, admin);
-        advancePipelines(products, admin);
-
-        log.info("Jeu de donnees pret : {} utilisateurs, {} produits. Mot de passe commun : {}",
-                users.size(), products.size(), defaultPassword);
+        log.info("Jeu de donnees pret : 10 utilisateurs. Mot de passe commun : {}", defaultPassword);
     }
 
     // ------------------------------------------------------------------
 
-    private List<User> seedUsers() {
+    private void seedUsers() {
         String hash = BCrypt.hashpw(defaultPassword, BCrypt.gensalt());
-        List<User> users = List.of(
-                user("ADM001", "Lachkar", "Aziz", "admin@cmrt.tn", hash, Role.ADMIN,
-                        Departement.ENGINEERING, Poste.DIRECTEUR, ServiceUnit.METHODE),
-                user("CP001", "Ben Salah", "Yassine", "chef.projet@cmrt.tn", hash, Role.CHEF_PROJET,
-                        Departement.ENGINEERING, Poste.CHEF_PROJET, ServiceUnit.NPI),
-                user("MET001", "Trabelsi", "Ahmed", "methodiste@cmrt.tn", hash, Role.METHODISTE,
-                        Departement.ENGINEERING, Poste.INGENIEUR, ServiceUnit.METHODE),
-                user("MET002", "Gharbi", "Youssef", "methodiste2@cmrt.tn", hash, Role.METHODISTE,
-                        Departement.ENGINEERING, Poste.TECHNICIEN, ServiceUnit.NPI),
-                user("QUA001", "Mansouri", "Sarra", "qualite@cmrt.tn", hash, Role.QUALITICIEN,
-                        Departement.QHSE, Poste.INGENIEUR, ServiceUnit.QUALITE),
-                user("QUA002", "Hamdi", "Fatma", "qualite2@cmrt.tn", hash, Role.QUALITICIEN,
-                        Departement.QHSE, Poste.TECHNICIEN, ServiceUnit.QUALITE),
-                user("CT001", "Jendoubi", "Khaled", "controle@cmrt.tn", hash, Role.CONTROLE_TECHNIQUE,
-                        Departement.ENGINEERING, Poste.INGENIEUR, ServiceUnit.CONTROLE_TECHNIQUE),
-                user("PRD001", "Aouni", "Mohamed", "production@cmrt.tn", hash, Role.RESPONSABLE_PRODUCTION,
-                        Departement.PRODUCTION, Poste.RESPONSABLE, ServiceUnit.PRODUCTION),
-                user("TEC001", "Riahi", "Ali", "technicien@cmrt.tn", hash, Role.TECHNICIEN,
-                        Departement.PRODUCTION, Poste.TECHNICIEN, ServiceUnit.PRODUCTION),
-                user("SUP001", "Karray", "Ines", "superviseur@cmrt.tn", hash, Role.VIEWER,
-                        Departement.PRODUCTION, Poste.SUPERVISEUR, ServiceUnit.PRODUCTION));
-        return userRepository.saveAll(users);
+        java.util.Date now = new java.util.Date();
+        String cls = "com.cmrt.pfe.models.User";
+        mongoTemplate.getCollection("users").insertMany(java.util.Arrays.asList(
+            doc("ADM001","Lachkar","Aziz","admin@cmrt.tn",hash,"ADMIN","ENGINEERING","DIRECTEUR","METHODE",now,cls),
+            doc("CP001","Ben Salah","Yassine","chef.projet@cmrt.tn",hash,"CHEF_PROJET","ENGINEERING","CHEF_PROJET","NPI",now,cls),
+            doc("MET001","Trabelsi","Ahmed","methodiste@cmrt.tn",hash,"METHODISTE","ENGINEERING","INGENIEUR","METHODE",now,cls),
+            doc("MET002","Gharbi","Youssef","methodiste2@cmrt.tn",hash,"METHODISTE","ENGINEERING","TECHNICIEN","NPI",now,cls),
+            doc("QUA001","Mansouri","Sarra","qualite@cmrt.tn",hash,"QUALITICIEN","QHSE","INGENIEUR","QUALITE",now,cls),
+            doc("QUA002","Hamdi","Fatma","qualite2@cmrt.tn",hash,"QUALITICIEN","QHSE","TECHNICIEN","QUALITE",now,cls),
+            doc("CT001","Jendoubi","Khaled","controle@cmrt.tn",hash,"CONTROLE_TECHNIQUE","ENGINEERING","INGENIEUR","CONTROLE_TECHNIQUE",now,cls),
+            doc("PRD001","Aouni","Mohamed","production@cmrt.tn",hash,"RESPONSABLE_PRODUCTION","PRODUCTION","RESPONSABLE","PRODUCTION",now,cls),
+            doc("TEC001","Riahi","Ali","technicien@cmrt.tn",hash,"TECHNICIEN","PRODUCTION","TECHNICIEN","PRODUCTION",now,cls),
+            doc("SUP001","Karray","Ines","superviseur@cmrt.tn",hash,"VIEWER","PRODUCTION","SUPERVISEUR","PRODUCTION",now,cls)
+        ));
     }
 
-    private User user(String matricule, String nom, String prenom, String email, String hash,
-                      Role role, Departement departement, Poste poste, ServiceUnit service) {
-        return User.builder()
-                .matricule(matricule).nom(nom).prenom(prenom).email(email).password(hash)
-                .role(role).departement(departement).poste(poste).serviceUnit(service)
-                // Demo accounts are pre-verified so the platform is usable without SMTP.
-                .enabled(true).active(true)
-                .build();
+    private org.bson.Document doc(String matricule, String nom, String prenom, String email, String password,
+                                   String role, String dept, String poste, String service,
+                                   java.util.Date now, String cls) {
+        return new org.bson.Document("matricule", matricule)
+                .append("nom", nom).append("prenom", prenom).append("email", email)
+                .append("password", password).append("role", role)
+                .append("departement", dept).append("poste", poste).append("serviceUnit", service)
+                .append("enabled", true).append("active", true)
+                .append("createdAt", now).append("_class", cls);
     }
 
     private User byRole(List<User> users, Role role) {

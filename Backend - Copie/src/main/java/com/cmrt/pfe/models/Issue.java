@@ -34,7 +34,7 @@ public class Issue {
     private String id;
 
     /** Human-readable key such as {@code BLK-2026-014}. */
-    @Indexed(unique = true)
+    @Indexed(unique = true, sparse = true)
     private String reference;
 
     @Indexed

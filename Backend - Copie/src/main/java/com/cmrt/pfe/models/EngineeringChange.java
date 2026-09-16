@@ -25,15 +25,16 @@ import java.util.List;
 @Document(collection = "engineering_changes")
 @Data
 @Builder
-@NoArgsConstructor
 @AllArgsConstructor
+
+@NoArgsConstructor
 public class EngineeringChange {
 
     @Id
     private String id;
 
     /** Human-readable key such as {@code ECR-2026-007}. */
-    @Indexed(unique = true)
+    @Indexed(unique = true, sparse = true)
     private String reference;
 
     @Indexed

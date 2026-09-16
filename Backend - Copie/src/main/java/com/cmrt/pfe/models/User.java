@@ -31,7 +31,7 @@ public class User {
 
     private String prenom;
 
-    @Indexed(unique = true)
+    @Indexed(unique = true, sparse = true)
     private String email;
 
     @JsonIgnore

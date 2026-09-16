@@ -30,7 +30,7 @@ public class TestResource {
     @Id
     private String id;
 
-    @Indexed(unique = true)
+    @Indexed(unique = true, sparse = true)
     private String code;
 
     private String nom;

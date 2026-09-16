@@ -34,7 +34,7 @@ public class Product {
     @Id
     private String id;
 
-    @Indexed(unique = true)
+    @Indexed(unique = true, sparse = true)
     private String reference;
 
     private String nom;
