@@ -1,0 +1,499 @@
+<app-loader *ngIf="loading()"></app-loader>
+
+<ng-container *ngIf="detail() as d">
+  <!-- ------------------------------------------------------------ header -->
+  <div class="page-head">
+    <div>
+      <div class="flex items-center gap-2 wrap mb-1">
+        <h1>{{ d.product.reference }}</h1>
+        <span class="badge" [ngClass]="d.product.projectType | badgeClass">{{ d.product.projectType | label }}</span>
+        <span class="badge" [ngClass]="d.product.status | badgeClass">{{ d.product.status | label }}</span>
+        <span class="badge danger" *ngIf="d.product.blocked">⛔ Bloqué</span>
+        <span class="badge warning" *ngIf="d.product.atRisk && !d.product.blocked">⚠ À risque</span>
+      </div>
+      <p>{{ d.product.nom }} · {{ d.product.customer | label }} · {{ d.product.family | label }}</p>
+    </div>
+    <div class="page-head-actions">
+      <button class="btn btn-danger" (click)="issueOpen.set(true)">🚨 Réclamation</button>
+      <button class="btn btn-ghost" *ngIf="canManage" (click)="editOpen.set(true)">✎ Modifier</button>
+      <button class="btn btn-ghost" (click)="loadAll()">↻</button>
+    </div>
+  </div>
+
+  <!-- Snapshot -->
+  <div class="grid grid-4 mb-3">
+    <div class="stat info">
+      <span class="stat-label">Avancement</span>
+      <span class="stat-value">{{ d.product.progressPercent }}%</span>
+      <app-progress [value]="d.product.progressPercent"
+                    [tone]="tone(d.product.progressPercent, d.product.blocked || d.product.atRisk)"
+                    [showValue]="false"></app-progress>
+      <span class="stat-hint">{{ d.product.completedStages }}/{{ d.product.totalStages }} jalons clôturés</span>
+    </div>
+    <div class="stat" [class.bad]="d.openIssues > 0">
+      <span class="stat-label">Blocages ouverts</span>
+      <span class="stat-value">{{ d.openIssues }}</span>
+      <span class="stat-hint">{{ d.openTasks }} tâche(s) ouverte(s)</span>
+    </div>
+    <div class="stat purple">
+      <span class="stat-label">Jalon en cours</span>
+      <span class="stat-value" style="font-size:1.02rem;line-height:1.35">
+        {{ d.product.currentStageLabel || '—' }}
+      </span>
+      <span class="stat-hint">Responsable : {{ activeStage()?.ownerName }}</span>
+    </div>
+    <div class="stat" [class.warn]="d.product.atRisk">
+      <span class="stat-label">SOP cible</span>
+      <span class="stat-value" style="font-size:1.02rem">{{ d.product.targetSopDate | dateFr }}</span>
+      <span class="stat-hint">{{ d.product.targetSopDate | daysLeft }}</span>
+    </div>
+  </div>
+
+  <!-- Ownership -->
+  <div class="card mb-3">
+    <div class="card-body" style="display:flex;gap:2rem;flex-wrap:wrap">
+      <div>
+        <div class="stat-label mb-1">Chef de projet</div>
+        <div class="flex items-center gap-2"><span class="avatar sm">{{ d.product.chefProjetName.charAt(0) }}</span>
+          <span class="small bold">{{ d.product.chefProjetName }}</span></div>
+      </div>
+      <div>
+        <div class="stat-label mb-1">Méthodiste</div>
+        <div class="flex items-center gap-2"><span class="avatar sm">{{ d.product.methodisteName.charAt(0) }}</span>
+          <span class="small bold">{{ d.product.methodisteName }}</span></div>
+      </div>
+      <div>
+        <div class="stat-label mb-1">Qualiticien</div>
+        <div class="flex items-center gap-2"><span class="avatar sm">{{ d.product.qualiticienName.charAt(0) }}</span>
+          <span class="small bold">{{ d.product.qualiticienName }}</span></div>
+      </div>
+      <div *ngIf="d.product.programme">
+        <div class="stat-label mb-1">Programme</div>
+        <div class="small bold">{{ d.product.programme }}</div>
+      </div>
+      <div *ngIf="d.product.annualVolume">
+        <div class="stat-label mb-1">Volume annuel</div>
+        <div class="small bold mono">{{ d.product.annualVolume }} pièces</div>
+      </div>
+      <div>
+        <div class="stat-label mb-1">Lancement</div>
+        <div class="small bold">{{ d.product.startDate | dateFr }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- tabs -->
+  <div class="tabs">
+    <button class="tab" [class.active]="tab() === 'pipeline'" (click)="tab.set('pipeline')">Pipeline</button>
+    <button class="tab" [class.active]="tab() === 'tasks'" (click)="tab.set('tasks')">
+      Tâches <span class="chip">{{ tasks().length }}</span>
+    </button>
+    <button class="tab" [class.active]="tab() === 'issues'" (click)="tab.set('issues')">
+      Blocages <span class="chip">{{ issues().length }}</span>
+    </button>
+    <button class="tab" [class.active]="tab() === 'documents'" (click)="tab.set('documents')">
+      Documents <span class="chip">{{ documents().length }}</span>
+    </button>
+    <button class="tab" [class.active]="tab() === 'changes'" (click)="tab.set('changes')">
+      Modifications <span class="chip">{{ changes().length }}</span>
+    </button>
+    <button class="tab" [class.active]="tab() === 'history'" (click)="tab.set('history')">Traçabilité</button>
+  </div>
+
+  <!-- ---------------------------------------------------------- pipeline -->
+  <ng-container *ngIf="tab() === 'pipeline'">
+    <div class="pipeline">
+      <div class="pipe-step" *ngFor="let s of d.stages"
+           [ngClass]="stageClass(s)"
+           [class.selected]="activeStage()?.stageType === s.stageType"
+           (click)="select(s)">
+        <div class="pipe-order">{{ s.order }}</div>
+        <div class="pipe-name">{{ s.label }}</div>
+        <div class="pipe-meta">{{ s.status | label }}</div>
+        <div class="pipe-meta" *ngIf="s.plannedEnd">
+          <span [style.color]="s.overdue ? 'var(--danger)' : null">
+            {{ s.overdue ? '⚠ ' : '' }}{{ s.plannedEnd | dateFr }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" *ngIf="activeStage() as stage">
+      <!-- Gate detail + actions -->
+      <div class="card">
+        <div class="card-head">
+          <h3>{{ stage.order }}. {{ stage.label }}</h3>
+          <span class="badge" [ngClass]="stage.status | badgeClass">{{ stage.status | label }}</span>
+        </div>
+        <div class="card-body">
+          <div class="form-row mb-2">
+            <div>
+              <div class="stat-label">Responsable</div>
+              <div class="small bold">{{ stage.ownerName }}</div>
+            </div>
+            <div>
+              <div class="stat-label">Planifié</div>
+              <div class="small bold">{{ stage.plannedStart | dateFr }} → {{ stage.plannedEnd | dateFr }}</div>
+              <div class="tiny" [style.color]="stage.overdue ? 'var(--danger)' : 'var(--text-muted)'">
+                {{ stage.plannedEnd | daysLeft }}
+              </div>
+            </div>
+            <div>
+              <div class="stat-label">Réalisé</div>
+              <div class="small bold">
+                {{ stage.actualStart ? (stage.actualStart | dateFr) : '—' }}
+                → {{ stage.actualEnd ? (stage.actualEnd | dateFr) : '—' }}
+              </div>
+            </div>
+          </div>
+
+          <div class="seed-hint mb-2" *ngIf="stage.blocked"
+               style="background:var(--danger-bg);border-color:#FECACA;color:#991B1B">
+            <strong>⛔ Jalon gelé</strong><br>
+            {{ stage.blockReason || 'Un blocage non résolu porte sur ce jalon.' }}
+          </div>
+
+          <div class="seed-hint mb-2" *ngIf="stage.notes"
+               style="background:var(--warning-bg);border-color:#FDE68A;color:#92400E">
+            <strong>Dernier retour</strong><br>{{ stage.notes }}
+          </div>
+
+          <!-- Deliverables gate -->
+          <div class="mb-2">
+            <div class="stat-label mb-1">Livrables requis</div>
+            <div class="flex gap-1 wrap" *ngIf="stage.requiredDeliverables.length; else noDeliverables">
+              <span class="badge"
+                    *ngFor="let dlv of stage.requiredDeliverables"
+                    [ngClass]="stage.missingDeliverables.includes(dlv) ? 'danger' : 'success'">
+                {{ stage.missingDeliverables.includes(dlv) ? '✗' : '✓' }} {{ dlv | label }}
+              </span>
+            </div>
+            <ng-template #noDeliverables>
+              <span class="small muted">Aucun livrable obligatoire.</span>
+            </ng-template>
+            <div class="field-hint" *ngIf="stage.missingDeliverables.length">
+              Ce jalon ne pourra pas être soumis tant que ces documents ne sont pas déposés
+              <b>et approuvés</b>.
+            </div>
+          </div>
+
+          <!-- Sign-offs -->
+          <div class="mb-2">
+            <div class="stat-label mb-1">Validations requises</div>
+            <table class="table" style="font-size:.8rem">
+              <tbody>
+                <tr *ngFor="let a of stage.approvals">
+                  <td>{{ a.requiredRole | label }}</td>
+                  <td>
+                    <span class="badge" [ngClass]="a.decision | badgeClass">{{ a.decision | label }}</span>
+                  </td>
+                  <td class="small">{{ a.approverName || '—' }}</td>
+                  <td class="tiny muted">{{ a.comment }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Workflow actions, mirroring the server-side rules -->
+          <div class="btn-group mt-2">
+            <button class="btn btn-primary btn-sm"
+                    *ngIf="stage.status === 'NOT_STARTED' || stage.status === 'REJECTED'"
+                    [disabled]="busy()" (click)="startStage(stage)">
+              ▶ Démarrer le jalon
+            </button>
+
+            <button class="btn btn-accent btn-sm"
+                    *ngIf="stage.status === 'IN_PROGRESS' || stage.status === 'BLOCKED'"
+                    [disabled]="busy()" (click)="submitStage(stage)">
+              ⇪ Soumettre à validation
+            </button>
+
+            <button class="btn btn-success btn-sm"
+                    *ngIf="canSignOff(stage)"
+                    [disabled]="busy()" (click)="approveStage(stage)">
+              ✔ Approuver
+            </button>
+
+            <button class="btn btn-danger btn-sm"
+                    *ngIf="canSignOff(stage)"
+                    [disabled]="busy()" (click)="openDecision('reject')">
+              ✘ Refuser
+            </button>
+
+            <button class="btn btn-ghost btn-sm"
+                    *ngIf="canManage && stage.status !== 'COMPLETED' && stage.status !== 'SKIPPED'"
+                    [disabled]="busy()" (click)="openDecision('skip')">
+              ⤳ Non applicable
+            </button>
+
+            <button class="btn btn-ghost btn-sm" (click)="uploadOpen.set(true)">📎 Déposer un livrable</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- What is attached to this gate -->
+      <div class="card">
+        <div class="card-head"><h3>Éléments rattachés au jalon</h3></div>
+        <div class="card-body flush">
+          <table class="table">
+            <tbody>
+              <tr>
+                <td>Blocages ouverts sur ce jalon</td>
+                <td class="right">
+                  <span class="badge" [ngClass]="stage.openIssues ? 'danger' : 'success'">{{ stage.openIssues }}</span>
+                </td>
+              </tr>
+              <tr *ngFor="let t of tasks()">
+                <td *ngIf="t.stageType === stage.stageType">
+                  <div class="small bold">{{ t.title }}</div>
+                  <div class="tiny muted">{{ t.status | label }} · échéance {{ t.dueDate | dateFr }}</div>
+                </td>
+                <td class="right" *ngIf="t.stageType === stage.stageType">
+                  <span class="badge" [ngClass]="t.status | badgeClass">{{ t.status | label }}</span>
+                </td>
+              </tr>
+              <tr *ngFor="let doc of documents()">
+                <td *ngIf="doc.stageType === stage.stageType">
+                  <div class="small bold">{{ doc.name }}</div>
+                  <div class="tiny muted">{{ doc.type | label }} · rév. {{ doc.currentVersion || '—' }}</div>
+                </td>
+                <td class="right" *ngIf="doc.stageType === stage.stageType">
+                  <span class="badge" [ngClass]="doc.status | badgeClass">{{ doc.status | label }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+
+  <!-- ------------------------------------------------------------- tasks -->
+  <div class="card" *ngIf="tab() === 'tasks'">
+    <div class="card-head">
+      <h3>Tâches du produit</h3>
+      <a routerLink="/taches" class="btn btn-ghost btn-sm">Ouvrir le tableau des tâches →</a>
+    </div>
+    <div class="card-body flush table-wrap">
+      <table class="table" *ngIf="tasks().length; else noTasks">
+        <thead>
+          <tr><th>Tâche</th><th>Jalon</th><th>Priorité</th><th>Échéance</th><th>Statut</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let t of tasks()" class="row-link" (click)="openTask(t)">
+            <td>
+              <div class="bold">{{ t.title }}</div>
+              <div class="tiny muted truncate" style="max-width:340px">{{ t.description }}</div>
+            </td>
+            <td class="small">{{ t.stageType | label }}</td>
+            <td><span class="badge" [ngClass]="t.priority | badgeClass">{{ t.priority | label }}</span></td>
+            <td>
+              <span class="small" [style.color]="t.overdue ? 'var(--danger)' : null">{{ t.dueDate | dateFr }}</span>
+            </td>
+            <td><span class="badge" [ngClass]="t.status | badgeClass">{{ t.status | label }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <ng-template #noTasks><app-empty icon="☑" message="Aucune tâche pour ce produit."></app-empty></ng-template>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ issues -->
+  <div class="card" *ngIf="tab() === 'issues'">
+    <div class="card-head">
+      <h3>Blocages</h3>
+      <button class="btn btn-danger btn-sm" (click)="issueOpen.set(true)">🚨 Déclarer</button>
+    </div>
+    <div class="card-body flush table-wrap">
+      <table class="table" *ngIf="issues().length; else noIssues">
+        <thead>
+          <tr><th>Réf.</th><th>Objet</th><th>Catégorie</th><th>Gravité</th><th>Jalon</th><th>Statut</th><th class="right">Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let i of issues()">
+            <td class="bold mono">{{ i.reference }}</td>
+            <td>
+              <div>{{ i.title }}</div>
+              <div class="tiny muted" *ngIf="i.blocksStage" style="color:var(--danger)">⛔ Gèle le jalon</div>
+            </td>
+            <td class="small">{{ i.category | label }}</td>
+            <td><span class="badge" [ngClass]="i.severity | badgeClass">{{ i.severity | label }}</span></td>
+            <td class="small">{{ i.stageType | label }}</td>
+            <td>
+              <span class="badge" [ngClass]="i.status | badgeClass">{{ i.status | label }}</span>
+              <span class="badge danger" *ngIf="i.slaBreached">SLA</span>
+            </td>
+            <td class="right">
+              <button class="btn btn-success btn-sm"
+                      *ngIf="i.status !== 'RESOLVED' && i.status !== 'CLOSED'"
+                      (click)="resolveIssue(i)">✔ Résoudre</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <ng-template #noIssues><app-empty icon="✅" message="Aucun blocage déclaré sur ce produit."></app-empty></ng-template>
+    </div>
+  </div>
+
+  <!-- --------------------------------------------------------- documents -->
+  <div class="card" *ngIf="tab() === 'documents'">
+    <div class="card-head">
+      <h3>Documents maîtrisés</h3>
+      <button class="btn btn-primary btn-sm" (click)="uploadOpen.set(true)">📎 Déposer une révision</button>
+    </div>
+    <div class="card-body flush">
+      <div *ngIf="documents().length; else noDocs">
+        <div *ngFor="let doc of documents()" style="border-bottom:1px solid var(--border);padding:.85rem 1.1rem">
+          <div class="flex items-center gap-2 wrap mb-1">
+            <strong>{{ doc.name }}</strong>
+            <span class="badge">{{ doc.type | label }}</span>
+            <span class="badge" [ngClass]="doc.status | badgeClass">{{ doc.status | label }}</span>
+            <span class="badge info" *ngIf="doc.currentVersion">Révision en vigueur : {{ doc.currentVersion }}</span>
+            <span class="badge" *ngIf="doc.stageType">{{ doc.stageType | label }}</span>
+          </div>
+
+          <table class="table" style="font-size:.79rem">
+            <thead>
+              <tr><th>Rév.</th><th>Fichier</th><th>Taille</th><th>Déposée par</th><th>Note</th><th>Statut</th><th class="right">Actions</th></tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let v of doc.versions">
+                <td class="bold">{{ v.version }}</td>
+                <td class="truncate" style="max-width:200px">{{ v.fileName }}</td>
+                <td class="mono">{{ v.sizeBytes | fileSize }}</td>
+                <td>
+                  <div class="small">{{ v.uploadedByName }}</div>
+                  <div class="tiny muted">{{ v.uploadedAt | timeAgo }}</div>
+                </td>
+                <td class="tiny muted truncate" style="max-width:180px">{{ v.changeNote }}</td>
+                <td><span class="badge" [ngClass]="v.status | badgeClass">{{ v.status | label }}</span></td>
+                <td class="right nowrap">
+                  <button class="btn btn-ghost btn-sm" (click)="download(doc, v.version)">⤓</button>
+                  <button class="btn btn-success btn-sm"
+                          *ngIf="v.status !== 'APPROVED' && v.status !== 'OBSOLETE' && canApprove"
+                          (click)="approveDocument(doc, v.version)">✔ Approuver</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <ng-template #noDocs>
+        <app-empty icon="🗂" message="Aucun document déposé. Les jalons attendent leurs livrables."></app-empty>
+      </ng-template>
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------------------- changes -->
+  <div class="card" *ngIf="tab() === 'changes'">
+    <div class="card-head">
+      <h3>Demandes de modification</h3>
+      <a routerLink="/modifications" class="btn btn-ghost btn-sm">Gérer les modifications →</a>
+    </div>
+    <div class="card-body flush table-wrap">
+      <table class="table" *ngIf="changes().length; else noChanges">
+        <thead>
+          <tr><th>Réf.</th><th>Objet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Créée</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let c of changes()">
+            <td class="bold mono">{{ c.reference }}</td>
+            <td>{{ c.title }}</td>
+            <td class="small">{{ c.type | label }}</td>
+            <td><span class="badge" [ngClass]="c.priority | badgeClass">{{ c.priority | label }}</span></td>
+            <td><span class="badge" [ngClass]="c.status | badgeClass">{{ c.status | label }}</span></td>
+            <td class="small">{{ c.createdAt | dateFr }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <ng-template #noChanges><app-empty icon="⇄" message="Aucune demande de modification."></app-empty></ng-template>
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------------------- history -->
+  <div class="card" *ngIf="tab() === 'history'">
+    <div class="card-head"><h3>Traçabilité complète</h3></div>
+    <div class="card-body">
+      <div class="timeline" *ngIf="history().length; else noHistory">
+        <div class="timeline-item" *ngFor="let h of history()"
+             [class.success]="h.action === 'APPROVE'"
+             [class.danger]="h.action === 'REJECT' || h.action === 'DELETE'">
+          <div class="what">{{ h.summary }}</div>
+          <div class="who">
+            {{ h.actorName }} · <span class="when">{{ h.timestamp | dateFr:true }} ({{ h.timestamp | timeAgo }})</span>
+          </div>
+          <div class="tiny muted" *ngIf="h.previousValue || h.newValue">
+            {{ h.previousValue }} → {{ h.newValue }}
+          </div>
+        </div>
+      </div>
+      <ng-template #noHistory><app-empty icon="🕘" message="Aucun événement enregistré."></app-empty></ng-template>
+    </div>
+  </div>
+</ng-container>
+
+<!-- ------------------------------------------------------------- dialogs -->
+
+<app-product-form *ngIf="editOpen()"
+                  [product]="product()"
+                  (closed)="editOpen.set(false)"
+                  (saved)="editOpen.set(false); loadAll()">
+</app-product-form>
+
+<app-issue-form *ngIf="issueOpen() && product() as p"
+                [product]="p"
+                [stageType]="activeStage()?.stageType"
+                (closed)="issueOpen.set(false)"
+                (created)="issueOpen.set(false); loadAll()">
+</app-issue-form>
+
+<app-modal *ngIf="decisionModal() as kind"
+           [title]="kind === 'reject' ? 'Refuser le jalon' : 'Marquer le jalon non applicable'"
+           (closed)="decisionModal.set(null)">
+  <p class="secondary-text small mb-2">
+    {{ kind === 'reject'
+      ? 'Le jalon repart chez son responsable et les validations déjà saisies sont remises à zéro.'
+      : 'Le jalon sera ignoré et le suivant s\'ouvrira automatiquement.' }}
+  </p>
+  <div class="field">
+    <label>Motif <span class="req">*</span></label>
+    <textarea class="textarea" [ngModel]="decisionComment()" (ngModelChange)="decisionComment.set($event)"
+              placeholder="Expliquez la décision : elle est enregistrée dans la traçabilité."></textarea>
+  </div>
+
+  <ng-container modal-actions>
+    <button class="btn btn-ghost" (click)="decisionModal.set(null)">Annuler</button>
+    <button class="btn" [ngClass]="kind === 'reject' ? 'btn-danger' : 'btn-primary'"
+            (click)="confirmDecision()">Confirmer</button>
+  </ng-container>
+</app-modal>
+
+<app-modal *ngIf="uploadOpen()" title="Déposer une révision" (closed)="uploadOpen.set(false)">
+  <div class="field">
+    <label>Fichier <span class="req">*</span></label>
+    <input type="file" class="input" (change)="onFileChosen($event)">
+    <div class="field-hint">25 Mo maximum. Le fichier est versionné : A, B, C…</div>
+  </div>
+  <div class="field">
+    <label>Type de document</label>
+    <select class="select" [ngModel]="uploadType()" (ngModelChange)="uploadType.set($event)">
+      <option *ngFor="let t of docTypes" [value]="t">{{ t | label }}</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Note de révision</label>
+    <textarea class="textarea" [ngModel]="uploadNote()" (ngModelChange)="uploadNote.set($event)"
+              placeholder="Ce qui change par rapport à la révision précédente."></textarea>
+  </div>
+  <div class="seed-hint">
+    La révision est déposée au statut « en revue ». Elle ne compte comme livrable du jalon
+    qu'une fois <b>approuvée</b>.
+  </div>
+
+  <ng-container modal-actions>
+    <button class="btn btn-ghost" (click)="uploadOpen.set(false)">Annuler</button>
+    <button class="btn btn-primary" [disabled]="busy()" (click)="submitUpload()">
+      {{ busy() ? 'Dépôt…' : 'Déposer' }}
+    </button>
+  </ng-container>
+</app-modal>
